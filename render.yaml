@@ -1,0 +1,123 @@
+services:
+  # --- Postgres: Temporal's persistence store (mirrors server/docker-compose.yml) ---
+  - type: pserv
+    name: temporal-postgres
+    runtime: image
+    plan: starter
+    image:
+      url: docker.io/library/postgres:14
+    disk:
+      name: temporal-postgres-data
+      mountPath: /var/lib/postgresql/data
+      sizeGB: 10
+    envVars:
+      - key: POSTGRES_USER
+        value: temporal
+      - key: POSTGRES_PASSWORD
+        value: temporal
+      - key: PGDATA
+        value: /var/lib/postgresql/data/pgdata
+
+  # --- Temporal server (auto-setup runs schema migrations on first boot) ---
+  - type: pserv
+    name: temporal-server
+    runtime: image
+    plan: starter
+    image:
+      url: docker.io/temporalio/auto-setup:1.24
+    envVars:
+      - key: DB
+        value: postgres12
+      - key: DB_PORT
+        value: "5432"
+      - key: POSTGRES_USER
+        value: temporal
+      - key: POSTGRES_PWD
+        value: temporal
+      - key: POSTGRES_SEEDS
+        fromService:
+          name: temporal-postgres
+          type: pserv
+          property: host
+
+  # --- Temporal Web UI (private by default — internal-only dashboard) ---
+  - type: pserv
+    name: temporal-ui
+    runtime: image
+    plan: starter
+    image:
+      url: docker.io/temporalio/ui:2.31.2
+    envVars:
+      - key: TEMPORAL_ADDRESS
+        fromService:
+          name: temporal-server
+          type: pserv
+          property: hostport
+
+  # --- API: Express server ---
+  - type: web
+    name: hotel-api
+    runtime: node
+    rootDir: server
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:api
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TEMPORAL_ADDRESS
+        fromService:
+          name: temporal-server
+          type: pserv
+          property: hostport
+      - key: TEMPORAL_NAMESPACE
+        value: default
+      - key: TEMPORAL_TASK_QUEUE
+        value: hotel-search
+      - key: AUTH_DISABLED
+        value: "false"
+      - key: API_TOKEN
+        generateValue: true
+      - key: CORS_ORIGINS
+        sync: false
+      - key: SUPPLIER_A_URL
+        sync: false
+      - key: SUPPLIER_B_URL
+        sync: false
+      - key: SUPPLIER_TIMEOUT_MS
+        value: "4500"
+      - key: RATE_LIMIT_PER_MIN
+        value: "30"
+      - key: MOCK_CHAOS_ENABLED
+        value: "false"
+      - key: LOG_LEVEL
+        value: info
+
+  # --- Worker: Temporal worker process ---
+  - type: worker
+    name: hotel-worker
+    runtime: node
+    rootDir: server
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:worker
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TEMPORAL_ADDRESS
+        fromService:
+          name: temporal-server
+          type: pserv
+          property: hostport
+      - key: TEMPORAL_NAMESPACE
+        value: default
+      - key: TEMPORAL_TASK_QUEUE
+        value: hotel-search
+      - key: SUPPLIER_A_URL
+        sync: false
+      - key: SUPPLIER_B_URL
+        sync: false
+      - key: SUPPLIER_TIMEOUT_MS
+        value: "4500"
+      - key: LOG_LEVEL
+        value: info
